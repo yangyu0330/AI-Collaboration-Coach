@@ -10,7 +10,10 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.api.config import settings
 from apps.api.schemas.telegram import TelegramChat, TelegramMessage, TelegramUpdate, TelegramUser
+from packages.core.services.priority_detector import PriorityDetector
+from packages.core.services.session_service import SessionService, enqueue_priority
 from packages.db.models.channel import Channel
 from packages.db.models.raw_message import RawMessage
 from packages.db.models.user import User
@@ -22,9 +25,21 @@ logger = structlog.get_logger()
 class MessageService:
     """Store incoming Telegram updates in project-scoped tables."""
 
-    def __init__(self, db: AsyncSession, project_id: uuid.UUID):
+    def __init__(
+        self,
+        db: AsyncSession,
+        project_id: uuid.UUID,
+        redis_client=None,
+    ):
         self.db = db
         self.project_id = project_id
+        self.redis = redis_client
+        self.session_service = SessionService(
+            db=db,
+            redis_client=redis_client,
+            idle_threshold_minutes=settings.session_idle_threshold_minutes,
+        )
+        self.priority_detector = PriorityDetector()
 
     async def process_update(self, update: TelegramUpdate) -> RawMessage | None:
         """Process one Telegram update and return the persisted message row."""
@@ -74,6 +89,21 @@ class MessageService:
         await self.db.commit()
         await self.db.refresh(raw_message)
 
+        session = await self.session_service.assign_to_session(raw_message)
+
+        priority_result = self.priority_detector.check(raw_message.text)
+        if priority_result.is_priority:
+            raw_message.is_priority = True
+            await self.db.commit()
+            await self.db.refresh(raw_message)
+            await enqueue_priority(self.redis, raw_message.id)
+            logger.info(
+                "priority_detected",
+                message_id=str(raw_message.id),
+                keywords=priority_result.matched_keywords,
+                command=priority_result.matched_command,
+            )
+
         logger.info(
             "message_saved",
             project_id=str(self.project_id),
@@ -81,6 +111,8 @@ class MessageService:
             telegram_message_id=message.message_id,
             chat_id=message.chat.id,
             message_type=raw_message.message_type,
+            session_id=str(session.id),
+            is_priority=raw_message.is_priority,
             is_edit_fallback=is_edit_fallback,
         )
         return raw_message
@@ -256,4 +288,3 @@ class MessageService:
         if message.video:
             metadata["video"] = message.video
         return metadata or None
-

@@ -72,10 +72,18 @@ async def telegram_webhook(
         logger.warning("webhook_parse_error", error=str(exc))
         return {"ok": False, "error": "Parse error"}
 
-    project_id = await _get_or_create_default_project(db)
-    service = MessageService(db=db, project_id=project_id)
+    redis_client = None
 
     try:
+        import redis.asyncio as aioredis
+
+        redis_client = aioredis.from_url(settings.redis_url)
+        project_id = await _get_or_create_default_project(db)
+        service = MessageService(
+            db=db,
+            project_id=project_id,
+            redis_client=redis_client,
+        )
         result = await service.process_update(update)
         return {
             "ok": True,
@@ -85,4 +93,6 @@ async def telegram_webhook(
         await db.rollback()
         logger.error("webhook_process_error", error=str(exc), update_id=update.update_id)
         return {"ok": False, "error": "Processing error"}
-
+    finally:
+        if redis_client is not None:
+            await redis_client.aclose()
