@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.config import settings
+from apps.api.routers.documents import router as documents_router
 from apps.api.routers.telegram import router as telegram_router
 
 try:
@@ -42,6 +43,7 @@ app.add_middleware(
 )
 
 app.include_router(telegram_router)
+app.include_router(documents_router)
 
 
 @app.get("/health")
@@ -58,6 +60,7 @@ async def health_check() -> dict[str, str]:
 async def health_check_db() -> dict[str, str]:
     """PostgreSQL connectivity probe."""
     from sqlalchemy import text
+
     from packages.db.session import get_engine
 
     engine = get_engine()
