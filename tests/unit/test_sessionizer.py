@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apps.api.config import settings
 from packages.core.services.session_service import SessionService
 from packages.db.models import Channel, ConversationSession, Project, RawMessage
-from packages.shared.constants import ANALYSIS_QUEUE
 from packages.shared.enums import SessionStatus, SessionTriggerType
 
 
@@ -33,6 +32,22 @@ class FakeRedis:
     async def lpush(self, key: str, value: str) -> int:
         self.pushes.append((key, value))
         return len(self.pushes)
+
+
+@pytest.fixture
+def queued_session_ids(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    queued: list[str] = []
+
+    class _FakeAnalyzeSessionTask:
+        @staticmethod
+        def delay(session_id: str) -> None:
+            queued.append(session_id)
+
+    monkeypatch.setattr(
+        "apps.worker.tasks.analysis_tasks.analyze_session_task",
+        _FakeAnalyzeSessionTask(),
+    )
+    return queued
 
 
 @pytest.fixture
@@ -132,6 +147,7 @@ async def test_assign_reuses_open_session_within_threshold(
 async def test_assign_closes_old_session_after_idle_gap_and_enqueues(
     db_session: AsyncSession,
     project_and_channel: tuple[Project, Channel],
+    queued_session_ids: list[str],
 ) -> None:
     project, channel = project_and_channel
     redis = FakeRedis()
@@ -162,7 +178,8 @@ async def test_assign_closes_old_session_after_idle_gap_and_enqueues(
     assert closed.trigger_type == SessionTriggerType.IDLE_TIMEOUT.value
     assert new_session.id != old_session.id
     assert msg2.session_id == new_session.id
-    assert redis.pushes == [(ANALYSIS_QUEUE, str(old_session.id))]
+    assert queued_session_ids == [str(old_session.id)]
+    assert redis.pushes == []
 
     await db_session.delete(project)
     await db_session.commit()
@@ -172,6 +189,7 @@ async def test_assign_closes_old_session_after_idle_gap_and_enqueues(
 async def test_close_idle_sessions_closes_matching_open_sessions(
     db_session: AsyncSession,
     project_and_channel: tuple[Project, Channel],
+    queued_session_ids: list[str],
 ) -> None:
     project, channel = project_and_channel
     redis = FakeRedis()
@@ -194,7 +212,8 @@ async def test_close_idle_sessions_closes_matching_open_sessions(
     assert refreshed is not None
     assert refreshed.session_status == SessionStatus.CLOSED.value
     assert refreshed.trigger_type == SessionTriggerType.IDLE_TIMEOUT.value
-    assert redis.pushes == [(ANALYSIS_QUEUE, str(session.id))]
+    assert queued_session_ids == [str(session.id)]
+    assert redis.pushes == []
 
     await db_session.delete(project)
     await db_session.commit()

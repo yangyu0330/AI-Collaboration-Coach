@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.db.models.conversation_session import ConversationSession
 from packages.db.models.raw_message import RawMessage
-from packages.shared.constants import ANALYSIS_QUEUE, PRIORITY_ANALYSIS_QUEUE
 from packages.shared.enums import SessionStatus, SessionTriggerType
 
 logger = structlog.get_logger()
@@ -149,12 +148,18 @@ class SessionService:
         )
 
     async def _enqueue_for_analysis(self, session: ConversationSession) -> None:
-        if self.redis is None:
-            logger.warning("redis_not_available_for_session_enqueue", session_id=str(session.id))
-            return
+        """Queue one closed session for asynchronous analysis."""
+        try:
+            from apps.worker.tasks.analysis_tasks import analyze_session_task
 
-        await self.redis.lpush(ANALYSIS_QUEUE, str(session.id))
-        logger.info("session_enqueued", session_id=str(session.id), queue=ANALYSIS_QUEUE)
+            analyze_session_task.delay(str(session.id))
+            logger.info("session_analysis_queued", session_id=str(session.id))
+        except Exception as exc:
+            logger.error(
+                "session_analysis_queue_failed",
+                session_id=str(session.id),
+                error=str(exc),
+            )
 
     @staticmethod
     def _now_utc_naive() -> datetime:
@@ -162,7 +167,15 @@ class SessionService:
 
 
 async def enqueue_priority(redis_client, message_id: uuid.UUID) -> None:
-    """Push a priority message id to the dedicated Redis queue."""
-    if redis_client is None:
-        return
-    await redis_client.lpush(PRIORITY_ANALYSIS_QUEUE, str(message_id))
+    """Queue one priority message for immediate analysis."""
+    del redis_client
+    try:
+        from apps.worker.tasks.analysis_tasks import analyze_priority_message_task
+
+        analyze_priority_message_task.delay(str(message_id))
+    except Exception as exc:
+        logger.error(
+            "priority_message_analysis_queue_failed",
+            message_id=str(message_id),
+            error=str(exc),
+        )

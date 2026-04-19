@@ -48,6 +48,18 @@ class DocumentService:
         await self.db.commit()
         await self.db.refresh(doc)
 
+        try:
+            from apps.worker.tasks.analysis_tasks import analyze_document_task
+
+            analyze_document_task.delay(str(doc.id))
+            logger.info("document_analysis_queued", document_id=str(doc.id))
+        except Exception as exc:
+            logger.error(
+                "document_analysis_queue_failed",
+                document_id=str(doc.id),
+                error=str(exc),
+            )
+
         logger.info(
             "document_created",
             document_id=str(doc.id),

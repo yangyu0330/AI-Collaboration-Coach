@@ -534,7 +534,7 @@ approved → applied → superseded
 #### 6-5. Supersede 처리 (§7 원칙 7)
 - 새 결정이 기존 결정을 대체할 때:
   1. 기존 레코드의 `status` → `superseded`
-  2. 기존 레코드의 `superseded_by` → 새 이벤트 ID
+  2. 기존 레코드의 `superseded_by` → 새 정본 레코드 ID (decisions_state.id)
   3. 새 레코드 생성 with `status: active`
 
 #### 6-6. 정보 부족 시 보완 요청 생성 (§17.3)

@@ -21,8 +21,10 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_routes={
         "close_idle_sessions": {"queue": "session"},
+        "analyze_session": {"queue": "analysis"},
+        "analyze_document": {"queue": "analysis"},
+        "analyze_priority_message": {"queue": "analysis"},
         "apps.worker.tasks.session_tasks.*": {"queue": "session"},
-        "apps.worker.tasks.analysis_tasks.*": {"queue": "analysis"},
         "apps.worker.tasks.notification_tasks.*": {"queue": "notification"},
     },
     beat_schedule={

@@ -6,7 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.config import settings
+from apps.api.routers.analysis import router as analysis_router
 from apps.api.routers.documents import router as documents_router
+from apps.api.routers.reviews import router as reviews_router
 from apps.api.routers.telegram import router as telegram_router
 
 try:
@@ -44,6 +46,8 @@ app.add_middleware(
 
 app.include_router(telegram_router)
 app.include_router(documents_router)
+app.include_router(analysis_router)
+app.include_router(reviews_router)
 
 
 @app.get("/health")

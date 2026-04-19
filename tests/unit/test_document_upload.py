@@ -31,6 +31,22 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
+def queued_document_ids(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    queued: list[str] = []
+
+    class _FakeAnalyzeDocumentTask:
+        @staticmethod
+        def delay(document_id: str) -> None:
+            queued.append(document_id)
+
+    monkeypatch.setattr(
+        "apps.worker.tasks.analysis_tasks.analyze_document_task",
+        _FakeAnalyzeDocumentTask(),
+    )
+    return queued
+
+
+@pytest.fixture
 async def db_session() -> AsyncSession:
     engine = create_async_engine(settings.database_url, echo=False)
     session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
@@ -42,7 +58,10 @@ async def db_session() -> AsyncSession:
 
 
 @pytest.mark.asyncio
-async def test_create_document_and_fetch_by_id(db_session: AsyncSession) -> None:
+async def test_create_document_and_fetch_by_id(
+    db_session: AsyncSession,
+    queued_document_ids: list[str],
+) -> None:
     project = Project(name=f"phase3-project-{uuid4().hex[:8]}")
     db_session.add(project)
     await db_session.commit()
@@ -64,13 +83,17 @@ async def test_create_document_and_fetch_by_id(db_session: AsyncSession) -> None
     assert fetched.source_type == SourceType.MEETING.value
     assert fetched.title == "Sprint sync notes"
     assert fetched.content.startswith("1) Prioritize")
+    assert queued_document_ids == [str(created.id)]
 
     await db_session.delete(project)
     await db_session.commit()
 
 
 @pytest.mark.asyncio
-async def test_list_documents_with_source_type_filter(db_session: AsyncSession) -> None:
+async def test_list_documents_with_source_type_filter(
+    db_session: AsyncSession,
+    queued_document_ids: list[str],
+) -> None:
     project = Project(name=f"phase3-list-{uuid4().hex[:8]}")
     db_session.add(project)
     await db_session.commit()
@@ -111,13 +134,17 @@ async def test_list_documents_with_source_type_filter(db_session: AsyncSession) 
     assert meeting_total == 2
     assert len(meeting_docs) == 2
     assert all(doc.source_type == SourceType.MEETING.value for doc in meeting_docs)
+    assert len(queued_document_ids) == 3
 
     await db_session.delete(project)
     await db_session.commit()
 
 
 @pytest.mark.asyncio
-async def test_create_document_rejects_unknown_project(db_session: AsyncSession) -> None:
+async def test_create_document_rejects_unknown_project(
+    db_session: AsyncSession,
+    queued_document_ids: list[str],
+) -> None:
     service = DocumentService(db=db_session)
     with pytest.raises(ProjectNotFoundError):
         await service.create_document(
@@ -128,6 +155,7 @@ async def test_create_document_rejects_unknown_project(db_session: AsyncSession)
                 content="orphan content",
             )
         )
+    assert queued_document_ids == []
 
 
 @pytest.mark.asyncio
